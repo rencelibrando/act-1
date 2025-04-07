@@ -1,9 +1,7 @@
 import javax.swing.*;
-import javax.swing.border.Border;
 import javax.sound.sampled.*;
 import java.awt.*;
 import java.awt.event.*;
-import java.io.IOException;
 import java.security.SecureRandom;
 import javax.swing.event.DocumentListener;
 import javax.swing.event.DocumentEvent;
@@ -162,7 +160,7 @@ public class OneTimeLoginSystem {
         buttonPanel.add(submitButton);
         buttonPanel.add(Box.createHorizontalStrut(20));
         buttonPanel.add(resendButton);
-
+        
         // Status Label
         otpStatusLabel = new JLabel(" ");
         otpStatusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
@@ -190,11 +188,28 @@ public class OneTimeLoginSystem {
     private void validateOTPInput() {
         String text = otpField.getText();
         if (!text.isEmpty()) {
-            // Remove any non-digit characters
-            text = text.replaceAll("[^0-9]", "");
+            // Only allow digits and common OTP characters
+            text = text.replaceAll("[^0-9]", "").trim();
+            
+            // If we've modified the text, update the field
             if (!text.equals(otpField.getText())) {
                 otpField.setText(text);
                 otpField.setCaretPosition(text.length());
+            }
+            
+            // Show live validation feedback
+            if (text.length() > 0) {
+                if (text.equals(generatedOTP)) {
+                    otpStatusLabel.setText("✓ OTP looks good!");
+                    otpStatusLabel.setForeground(new Color(76, 175, 80)); // Green
+                } else if (text.length() == OTP_LENGTH) {
+                    otpStatusLabel.setText("⚠ Check your OTP carefully");
+                    otpStatusLabel.setForeground(Color.YELLOW);
+                } else {
+                    otpStatusLabel.setText(" "); // Clear status
+                }
+            } else {
+                otpStatusLabel.setText(" "); // Clear status
             }
         }
     }
@@ -206,7 +221,17 @@ public class OneTimeLoginSystem {
         for (int i = 0; i < OTP_LENGTH; i++) {
             otp.append(random.nextInt(10));
         }
-        return otp.toString();
+        
+        // Get the OTP as a string and trim to remove any whitespace
+        String otpStr = otp.toString().trim();
+        
+        // Debug log the generated OTP
+        System.out.println("Generated OTP: " + otpStr);
+        
+        // Save the OTP to a class variable for debugging
+        currentOTP = otpStr;
+        
+        return otpStr;
     }
 
     private void sendOTP(String otp) {
@@ -229,9 +254,10 @@ public class OneTimeLoginSystem {
             remainingTime[0]--;
             if (remainingTime[0] <= 0) {
                 otpTimer.stop();
-                timerLabel.setText("OTP Expired!");
+                timerLabel.setText("Time remaining: 0:00");
                 otpStatusLabel.setText("OTP has expired. Please request a new one.");
-                generatedOTP = null;
+                // Don't set generatedOTP to null here as it can cause validation issues
+                // We'll check expiry time separately during verification
             } else {
                 int minutes = remainingTime[0] / 60;
                 int seconds = remainingTime[0] % 60;
@@ -248,6 +274,7 @@ public class OneTimeLoginSystem {
         button.setFocusPainted(false);
         addHoverEffect(button, bg, bg.darker());
     }
+    
     private void createLoginPanel() {
         // Create a gradient panel for an aesthetic login page
         loginPanel = new GradientPanel(new Color(66, 133, 244), new Color(219, 233, 245));
@@ -416,6 +443,9 @@ public class OneTimeLoginSystem {
         contentPanel.add(Box.createVerticalStrut(30));
         contentPanel.add(actionPanel);
 
+        // Add database button to the content panel
+        DatabaseIntegration.addDatabaseButton(contentPanel);
+
         // Logout button resets fields and transitions back to the login page
         logoutButton.addActionListener(e -> handleLogout());
 
@@ -483,19 +513,118 @@ public class OneTimeLoginSystem {
             return;
         }
         
-        if (!email.equals(VALID_EMAIL)) {
-            JOptionPane.showMessageDialog(mainFrame,
-                "Invalid email address!",
-                "Error",
-                JOptionPane.ERROR_MESSAGE);
-            playErrorFeedback();
-            flashErrorTheme();
-            shakeFrame();
-            return;
-        }
+        // Check if user exists in database
+        boolean userExists = DatabaseIntegration.userExists(username);
         
-        // Check if credentials are valid
-        if (username.equals(VALID_USERNAME) && password.equals(VALID_PASSWORD)) {
+        if (userExists) {
+            // Verify credentials using database
+            boolean loginSuccess = DatabaseIntegration.recordLoginAttempt(username, password);
+            
+            if (loginSuccess) {
+                // Check if credentials have been used before
+                String credentials = username + ":" + password;
+                if (usedCredentials.contains(credentials)) {
+                    JOptionPane.showMessageDialog(mainFrame,
+                        "These credentials have already been used!\nPlease contact system administrator for new credentials.",
+                        "Error",
+                        JOptionPane.ERROR_MESSAGE);
+                    playErrorFeedback();
+                    flashErrorTheme();
+                    shakeFrame();
+                    return;
+                }
+                
+                // Mark credentials as used
+                usedCredentials.add(credentials);
+                
+                // Get email from database
+                String userEmail = DatabaseIntegration.getUserEmail(username);
+                
+                // Store current email for resending OTP
+                currentEmail = userEmail;
+                
+                // Generate and send OTP
+                generatedOTP = generateOTP();
+                otpExpiryTime = System.currentTimeMillis() + (5 * 60 * 1000); // 5 minutes
+                
+                // Save a fixed copy of the current OTP
+                final String fixedOTP = generatedOTP;
+                
+                // Create and show loading dialog
+                JDialog loadingDialog = new JDialog(mainFrame, "Sending OTP", false);
+                loadingDialog.setSize(300, 100);
+                loadingDialog.setLocationRelativeTo(mainFrame);
+                loadingDialog.setLayout(new BorderLayout());
+                
+                JPanel loadingPanel = new JPanel(new BorderLayout(10, 10));
+                loadingPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
+                loadingPanel.setBackground(Color.WHITE);
+                
+                JLabel loadingLabel = new JLabel("Sending OTP to your email...");
+                loadingLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+                
+                JProgressBar progressBar = new JProgressBar();
+                progressBar.setIndeterminate(true);
+                
+                loadingPanel.add(loadingLabel, BorderLayout.NORTH);
+                loadingPanel.add(progressBar, BorderLayout.CENTER);
+                
+                loadingDialog.add(loadingPanel);
+                loadingDialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+                
+                // Use SwingWorker to send OTP in background thread
+                SwingWorker<Void, Void> worker = new SwingWorker<Void, Void>() {
+                    @Override
+                    protected Void doInBackground() throws Exception {
+                        // Send OTP via email
+                        EmailService.sendOTP(userEmail, fixedOTP);
+                        return null;
+                    }
+                    
+                    @Override
+                    protected void done() {
+                        // Ensure the generatedOTP is still the same as what was sent
+                        // This prevents any race conditions
+                        generatedOTP = fixedOTP;
+                        
+                        // Close loading dialog
+                        loadingDialog.dispose();
+                        
+                        // Show success message
+                        JOptionPane.showMessageDialog(mainFrame,
+                            "OTP has been sent to your email: " + userEmail,
+                            "OTP Sent",
+                            JOptionPane.INFORMATION_MESSAGE);
+                        
+                        // Start OTP timer
+                        startOtpTimer();
+                        
+                        // Clear fields before transitioning to OTP panel
+                        usernameField.setText("");
+                        passwordField.setText("");
+                        
+                        // Set loginUsed to true to prevent unwanted transitions
+                        loginUsed = true;
+                        
+                        // Transition to OTP panel
+                        cardLayout.show(containerPanel, "otp");
+                    }
+                };
+                
+                // Execute the worker and show the loading dialog
+                worker.execute();
+                loadingDialog.setVisible(true);
+            } else {
+                JOptionPane.showMessageDialog(mainFrame,
+                    "Invalid username or password!\nPlease try again.",
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE);
+                playErrorFeedback();
+                flashErrorTheme();
+                shakeFrame();
+            }
+        } else if (username.equals(VALID_USERNAME) && password.equals(VALID_PASSWORD)) {
+            // Legacy authentication for backward compatibility
             // Check if credentials have been used before
             String credentials = username + ":" + password;
             if (usedCredentials.contains(credentials)) {
@@ -512,23 +641,80 @@ public class OneTimeLoginSystem {
             // Mark credentials as used
             usedCredentials.add(credentials);
             
+            // Store email for resending OTP
+            currentEmail = VALID_EMAIL;
+            
             // Generate and send OTP
             generatedOTP = generateOTP();
             otpExpiryTime = System.currentTimeMillis() + (5 * 60 * 1000); // 5 minutes
-            EmailService.sendOTP(VALID_EMAIL, generatedOTP);
             
-            // Start OTP timer
-            startOtpTimer();
+            // Save a fixed copy of the current OTP
+            final String fixedOTP = generatedOTP;
             
-            // Clear fields before transitioning to OTP panel
-            usernameField.setText("");
-            passwordField.setText("");
+            // Create and show loading dialog
+            JDialog loadingDialog = new JDialog(mainFrame, "Sending OTP", false);
+            loadingDialog.setSize(300, 100);
+            loadingDialog.setLocationRelativeTo(mainFrame);
+            loadingDialog.setLayout(new BorderLayout());
             
-            // Set loginUsed to true to prevent unwanted transitions
-            loginUsed = true;
+            JPanel loadingPanel = new JPanel(new BorderLayout(10, 10));
+            loadingPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
+            loadingPanel.setBackground(Color.WHITE);
             
-            // Transition to OTP panel
-            cardLayout.show(containerPanel, "otp");
+            JLabel loadingLabel = new JLabel("Sending OTP to your email...");
+            loadingLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+            
+            JProgressBar progressBar = new JProgressBar();
+            progressBar.setIndeterminate(true);
+            
+            loadingPanel.add(loadingLabel, BorderLayout.NORTH);
+            loadingPanel.add(progressBar, BorderLayout.CENTER);
+            
+            loadingDialog.add(loadingPanel);
+            loadingDialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+            
+            // Use SwingWorker to send OTP in background thread
+            SwingWorker<Void, Void> worker = new SwingWorker<Void, Void>() {
+                @Override
+                protected Void doInBackground() throws Exception {
+                    // Send OTP via email
+                    EmailService.sendOTP(VALID_EMAIL, fixedOTP);
+                    return null;
+                }
+                
+                @Override
+                protected void done() {
+                    // Ensure the generatedOTP is still the same as what was sent
+                    // This prevents any race conditions
+                    generatedOTP = fixedOTP;
+                    
+                    // Close loading dialog
+                    loadingDialog.dispose();
+                    
+                    // Show success message
+                    JOptionPane.showMessageDialog(mainFrame,
+                        "OTP has been sent to your email: " + VALID_EMAIL,
+                        "OTP Sent",
+                        JOptionPane.INFORMATION_MESSAGE);
+                    
+                    // Start OTP timer
+                    startOtpTimer();
+                    
+                    // Clear fields before transitioning to OTP panel
+                    usernameField.setText("");
+                    passwordField.setText("");
+                    
+                    // Set loginUsed to true to prevent unwanted transitions
+                    loginUsed = true;
+                    
+                    // Transition to OTP panel
+                    cardLayout.show(containerPanel, "otp");
+                }
+            };
+            
+            // Execute the worker and show the loading dialog
+            worker.execute();
+            loadingDialog.setVisible(true);
         } else {
             JOptionPane.showMessageDialog(mainFrame,
                 "Invalid username or password!\nPlease try again.",
@@ -539,8 +725,17 @@ public class OneTimeLoginSystem {
             shakeFrame();
         }
     }
+    
     private void handleOtpVerification() {
         String enteredOTP = otpField.getText().trim();
+
+        // Debug information
+        System.out.println("Entered OTP: '" + enteredOTP + "'");
+        System.out.println("Expected OTP: '" + generatedOTP + "'");
+        System.out.println("Current OTP: '" + currentOTP + "'");
+        System.out.println("OTP Length - Entered: " + enteredOTP.length() + 
+                          ", Expected: " + (generatedOTP != null ? generatedOTP.length() : "null") +
+                          ", Current: " + (currentOTP != null ? currentOTP.length() : "null"));
 
         if (enteredOTP.isEmpty()) {
             JOptionPane.showMessageDialog(mainFrame,
@@ -560,23 +755,56 @@ public class OneTimeLoginSystem {
             return;
         }
 
-        if (enteredOTP.equals(generatedOTP)) {
+        // Check if OTP is null (which could happen if somehow it was reset)
+        if (generatedOTP == null && currentOTP != null) {
+            // If generatedOTP is lost but we have currentOTP, use that instead
+            generatedOTP = currentOTP;
+            System.out.println("Recovered OTP from currentOTP: " + generatedOTP);
+        } else if (generatedOTP == null) {
+            JOptionPane.showMessageDialog(mainFrame,
+                "OTP verification error. Please request a new OTP.",
+                "Error",
+                JOptionPane.ERROR_MESSAGE);
+            playErrorFeedback();
+            return;
+        }
+
+        // Use trim to remove any whitespace and perform case-insensitive comparison
+        if (enteredOTP.equals(generatedOTP.trim()) || 
+            enteredOTP.equals(currentOTP) ||  // Also check against our backup OTP
+            // Try exact equals, case-insensitive, stripped of all non-digits
+            enteredOTP.replaceAll("[^0-9]", "").equals(generatedOTP.replaceAll("[^0-9]", "")) ||
+            enteredOTP.replaceAll("[^0-9]", "").equals(currentOTP != null ? currentOTP.replaceAll("[^0-9]", "") : "")) {
+            
+            System.out.println("OTP verification successful!");
             otpTimer.stop();
             loginUsed = true;
             animateTransition(otpPanel, contentPanel);
         } else {
+            System.out.println("OTP verification failed!");
+            System.out.println("OTP comparison results:");
+            System.out.println("- enteredOTP.equals(generatedOTP.trim()): " + enteredOTP.equals(generatedOTP.trim()));
+            System.out.println("- enteredOTP.equals(currentOTP): " + enteredOTP.equals(currentOTP));
+            System.out.println("- Digit comparison with generatedOTP: " + 
+                enteredOTP.replaceAll("[^0-9]", "").equals(generatedOTP.replaceAll("[^0-9]", "")));
+            System.out.println("- Digit comparison with currentOTP: " + 
+                enteredOTP.replaceAll("[^0-9]", "").equals(currentOTP != null ? currentOTP.replaceAll("[^0-9]", "") : ""));
+            
             JOptionPane.showMessageDialog(mainFrame,
-                "Invalid OTP!",
+                "Invalid OTP! Please try again or request a new one.",
                 "Error",
                 JOptionPane.ERROR_MESSAGE);
             playErrorFeedback();
         }
     }
+    
     private void resendOTP() {
-        String email = emailField.getText().trim();
-        if (email.isEmpty()) {
+        // Use stored email instead of getting from the cleared field
+        String email = currentEmail;
+        
+        if (email == null || email.isEmpty()) {
             JOptionPane.showMessageDialog(mainFrame,
-                "Email address not found!",
+                "Email address not found! Please go back to login.",
                 "Error",
                 JOptionPane.ERROR_MESSAGE);
             playErrorFeedback();
@@ -585,14 +813,63 @@ public class OneTimeLoginSystem {
         
         generatedOTP = generateOTP();
         otpExpiryTime = System.currentTimeMillis() + (OTP_VALIDITY_DURATION * 1000);
-        EmailService.sendOTP(email, generatedOTP);
-        startOtpTimer();
-        JOptionPane.showMessageDialog(mainFrame,
-            "New OTP sent to your email!",
-            "Success",
-            JOptionPane.INFORMATION_MESSAGE);
-        otpField.setText("");
+        
+        // Save a fixed copy of the current OTP
+        final String fixedOTP = generatedOTP;
+        
+        // Create and show loading dialog
+        JDialog loadingDialog = new JDialog(mainFrame, "Sending OTP", false);
+        loadingDialog.setSize(300, 100);
+        loadingDialog.setLocationRelativeTo(mainFrame);
+        loadingDialog.setLayout(new BorderLayout());
+        
+        JPanel loadingPanel = new JPanel(new BorderLayout(10, 10));
+        loadingPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
+        loadingPanel.setBackground(Color.WHITE);
+        
+        JLabel loadingLabel = new JLabel("Sending new OTP to your email...");
+        loadingLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        
+        JProgressBar progressBar = new JProgressBar();
+        progressBar.setIndeterminate(true);
+        
+        loadingPanel.add(loadingLabel, BorderLayout.NORTH);
+        loadingPanel.add(progressBar, BorderLayout.CENTER);
+        
+        loadingDialog.add(loadingPanel);
+        loadingDialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+        
+        // Use SwingWorker to send OTP in background thread
+        SwingWorker<Void, Void> worker = new SwingWorker<Void, Void>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                EmailService.sendOTP(email, fixedOTP);
+                return null;
+            }
+            
+            @Override
+            protected void done() {
+                // Ensure the generatedOTP is still the same as what was sent
+                // This prevents any race conditions
+                generatedOTP = fixedOTP;
+                
+                // Close loading dialog
+                loadingDialog.dispose();
+                
+                startOtpTimer();
+                JOptionPane.showMessageDialog(mainFrame,
+                    "New OTP sent to your email!",
+                    "Success",
+                    JOptionPane.INFORMATION_MESSAGE);
+                otpField.setText("");
+            }
+        };
+        
+        // Execute the worker and show the loading dialog
+        worker.execute();
+        loadingDialog.setVisible(true);
     }
+    
     // Plays an error sound (using a custom error.wav if available), smoothly transitions the login panel from red back to normal, and shakes the frame.
     private void playErrorFeedback() {
         try {
@@ -744,7 +1021,8 @@ public class OneTimeLoginSystem {
         if (otpTimer != null && otpTimer.isRunning()) {
             otpTimer.stop();
         }
-        // Add any other timers here
+        // Close database connection
+        DatabaseIntegration.closeConnection();
     }
 
     // Handle logout and reset state
@@ -764,79 +1042,4 @@ public class OneTimeLoginSystem {
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> new OneTimeLoginSystem());
     }
-}
-
-// Custom panel that paints a vertical gradient background with fade support.
-class GradientPanel extends JPanel {
-    private Color color1;
-    private Color color2;
-    private float alpha = 1f; // opacity level
-
-    public GradientPanel(Color color1, Color color2) {
-        this.color1 = color1;
-        this.color2 = color2;
-        setOpaque(false);
-    }
-
-    // Getters for original colors.
-    public Color getColor1() {
-        return color1;
-    }
-    public Color getColor2() {
-        return color2;
-    }
-    // Allows changing the gradient colors.
-    public void setColors(Color c1, Color c2) {
-        this.color1 = c1;
-        this.color2 = c2;
-        repaint();
-    }
-
-    public void setAlpha(float alpha) {
-        this.alpha = alpha;
-        repaint();
-    }
-    public float getAlpha() {
-        return alpha;
-    }
-
-    @Override
-    protected void paintComponent(Graphics g) {
-        Graphics2D g2d = (Graphics2D) g.create();
-        // Apply current opacity.
-        g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-        int w = getWidth();
-        int h = getHeight();
-        GradientPaint gp = new GradientPaint(0, 0, color1, 0, h, color2);
-        g2d.setPaint(gp);
-        g2d.fillRect(0, 0, w, h);
-        g2d.dispose();
-        super.paintComponent(g);
-    }
-}
-
-// Custom border for rounded (curved) text fields.
-class RoundedCornerBorder implements Border {
-    private int radius;
-
-    public RoundedCornerBorder(int radius) {
-        this.radius = radius;
-    }
-    @Override
-    public Insets getBorderInsets(Component c) {
-        return new Insets(radius / 2, radius / 2, radius / 2, radius / 2);
-    }
-    @Override
-    public boolean isBorderOpaque() {
-        return false;
-    }
-    @Override
-    public void paintBorder(Component c, Graphics g, int x, int y, int width, int height) {
-        Graphics2D g2 = (Graphics2D) g.create();
-        // Smooth the border.
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g2.setColor(Color.WHITE);
-        g2.drawRoundRect(x, y, width - 1, height - 1, radius, radius);
-        g2.dispose();
-    }
-}
+} 
