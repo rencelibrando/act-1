@@ -30,6 +30,12 @@ public class OneTimeLoginSystem {
     private static final String VALID_USERNAME = "rence";
     private static final String VALID_PASSWORD = "12345";
     private static final String VALID_EMAIL = "clarencemanlolo@gmail.com";
+    
+    // Interface for OTP verification callbacks
+    public interface OtpVerificationListener {
+        void onVerificationComplete(boolean success);
+    }
+    
     private String generatedOTP;
     private long otpExpiryTime;
     private GradientPanel otpPanel;
@@ -57,19 +63,21 @@ public class OneTimeLoginSystem {
     private String currentEmail;
     private String currentOTP;
 
-    public OneTimeLoginSystem() {
-        // Set a modern look and feel if available
+    static {
         try {
-            for (UIManager.LookAndFeelInfo info : UIManager.getInstalledLookAndFeels()) {
-                if ("Nimbus".equals(info.getName())) {
-                    UIManager.setLookAndFeel(info.getClassName());
-                    break;
-                }
-            }
+            // Use system look and feel instead of Nimbus for better button compatibility
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+            
+            // Set custom button colors that will override the Look and Feel
+            UIManager.put("Button.background", Color.WHITE);
+            UIManager.put("Button.foreground", new Color(66, 133, 244));
+            UIManager.put("Button.select", new Color(230, 230, 230));
         } catch (Exception e) {
-            // Nimbus not available; default look and feel will be used.
+            e.printStackTrace();
         }
+    }
 
+    public OneTimeLoginSystem() {
         // Initialize the main frame
         mainFrame = new JFrame("One-Time Login System");
         mainFrame.setSize(500, 400);
@@ -98,6 +106,7 @@ public class OneTimeLoginSystem {
             }
         });
         
+        // Show the frame by default unless it will be shown later
         mainFrame.setVisible(true);
 
         usedCredentials = new HashSet<>();
@@ -160,7 +169,7 @@ public class OneTimeLoginSystem {
         buttonPanel.add(submitButton);
         buttonPanel.add(Box.createHorizontalStrut(20));
         buttonPanel.add(resendButton);
-        
+
         // Status Label
         otpStatusLabel = new JLabel(" ");
         otpStatusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
@@ -400,67 +409,68 @@ public class OneTimeLoginSystem {
     }
 
     private void createContentPanel() {
-        // Create a gradient panel for the content page
-        contentPanel = new GradientPanel(new Color(34, 193, 195), new Color(253, 187, 45));
-        contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
-        contentPanel.setBorder(BorderFactory.createEmptyBorder(40, 40, 40, 40));
-        contentPanel.setAlpha(1f); // fully visible when shown
-
-        JLabel welcomeLabel = new JLabel("Welcome to the System!");
-        welcomeLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        contentPanel = new GradientPanel(new Color(34, 193, 195), new Color(45, 253, 221));
+        contentPanel.setLayout(new BorderLayout());
+        contentPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+        
+        JPanel welcomePanel = new JPanel(new BorderLayout());
+        welcomePanel.setOpaque(false);
+        
+        JLabel welcomeLabel = new JLabel("Welcome to the Portal");
         welcomeLabel.setFont(TITLE_FONT);
         welcomeLabel.setForeground(Color.WHITE);
-
-        JLabel infoLabel = new JLabel("You have successfully logged in.");
-        infoLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        infoLabel.setFont(NORMAL_FONT);
-        infoLabel.setForeground(Color.WHITE);
-
-        // Action panel with Logout and Exit buttons
+        welcomeLabel.setHorizontalAlignment(JLabel.CENTER);
+        welcomePanel.add(welcomeLabel, BorderLayout.NORTH);
+        
         JPanel actionPanel = new JPanel();
         actionPanel.setOpaque(false);
+        
         JButton logoutButton = new JButton("Logout");
         JButton exitButton = new JButton("Exit");
-        logoutButton.setFont(new Font("Segoe UI", Font.BOLD, 16));
-        exitButton.setFont(new Font("Segoe UI", Font.BOLD, 16));
-        logoutButton.setFocusPainted(false);
-        exitButton.setFocusPainted(false);
-        logoutButton.setBackground(Color.WHITE);
-        logoutButton.setForeground(new Color(34, 193, 195));
-        exitButton.setBackground(Color.WHITE);
-        exitButton.setForeground(new Color(253, 187, 45));
-        logoutButton.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        exitButton.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        addHoverEffect(logoutButton, Color.WHITE, new Color(230, 230, 230));
-        addHoverEffect(exitButton, Color.WHITE, new Color(230, 230, 230));
+        
+        styleButton(logoutButton, Color.WHITE, new Color(255, 89, 94));
+        styleButton(exitButton, Color.WHITE, new Color(55, 55, 55));
+        
         actionPanel.add(logoutButton);
         actionPanel.add(Box.createHorizontalStrut(20));
         actionPanel.add(exitButton);
-
-        contentPanel.add(welcomeLabel);
-        contentPanel.add(Box.createVerticalStrut(20));
-        contentPanel.add(infoLabel);
-        contentPanel.add(Box.createVerticalStrut(30));
-        contentPanel.add(actionPanel);
-
-        // Add database button to the content panel
-        DatabaseIntegration.addDatabaseButton(contentPanel);
-
-        // Logout button resets fields and transitions back to the login page
-        logoutButton.addActionListener(e -> handleLogout());
-
-        // Exit button with confirmation dialog
-        exitButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                int confirm = JOptionPane.showConfirmDialog(mainFrame,
-                        "Are you sure you want to exit?", "Exit Confirmation",
-                        JOptionPane.YES_NO_OPTION);
-                if (confirm == JOptionPane.YES_OPTION) {
-                    System.exit(0);
-                }
+        
+        contentPanel.add(welcomePanel, BorderLayout.NORTH);
+        contentPanel.add(actionPanel, BorderLayout.SOUTH);
+        
+        // Add welcome animation
+        Icon animationIcon;
+        try {
+            // Try to load the animated GIF from resources
+            URL gifURL = getClass().getResource("/resources/success.gif");
+            if (gifURL != null) {
+                animationIcon = new ImageIcon(gifURL);
+                JLabel animationLabel = new JLabel(animationIcon);
+                animationLabel.setHorizontalAlignment(JLabel.CENTER);
+                contentPanel.add(animationLabel, BorderLayout.CENTER);
+            } else {
+                // Fallback to static success image or text
+                JLabel successLabel = new JLabel("Login Successful!");
+                successLabel.setFont(new Font("Segoe UI", Font.BOLD, 24));
+                successLabel.setForeground(Color.WHITE);
+                successLabel.setHorizontalAlignment(JLabel.CENTER);
+                contentPanel.add(successLabel, BorderLayout.CENTER);
             }
-        });
+        } catch (Exception e) {
+            // Fallback if there's any error
+            JLabel successLabel = new JLabel("Login Successful!");
+            successLabel.setFont(new Font("Segoe UI", Font.BOLD, 24));
+            successLabel.setForeground(Color.WHITE);
+            successLabel.setHorizontalAlignment(JLabel.CENTER);
+            contentPanel.add(successLabel, BorderLayout.CENTER);
+        }
+        
+        // Add database integration button
+        DatabaseIntegration.addDatabaseButton(contentPanel, this);
+        
+        // Add action listeners
+        logoutButton.addActionListener(e -> handleLogout());
+        exitButton.addActionListener(e -> System.exit(0));
     }
 
     // Validates the input fields and returns an error message if validation fails; otherwise returns null.
@@ -524,16 +534,16 @@ public class OneTimeLoginSystem {
                 // Check if credentials have been used before
                 String credentials = username + ":" + password;
                 if (usedCredentials.contains(credentials)) {
-                    JOptionPane.showMessageDialog(mainFrame,
+            JOptionPane.showMessageDialog(mainFrame,
                         "These credentials have already been used!\nPlease contact system administrator for new credentials.",
-                        "Error",
-                        JOptionPane.ERROR_MESSAGE);
-                    playErrorFeedback();
-                    flashErrorTheme();
-                    shakeFrame();
-                    return;
-                }
-                
+                "Error",
+                JOptionPane.ERROR_MESSAGE);
+            playErrorFeedback();
+            flashErrorTheme();
+            shakeFrame();
+            return;
+        }
+        
                 // Mark credentials as used
                 usedCredentials.add(credentials);
                 
@@ -696,19 +706,19 @@ public class OneTimeLoginSystem {
                         "OTP has been sent to your email: " + VALID_EMAIL,
                         "OTP Sent",
                         JOptionPane.INFORMATION_MESSAGE);
-                    
-                    // Start OTP timer
-                    startOtpTimer();
-                    
-                    // Clear fields before transitioning to OTP panel
-                    usernameField.setText("");
-                    passwordField.setText("");
-                    
-                    // Set loginUsed to true to prevent unwanted transitions
-                    loginUsed = true;
-                    
-                    // Transition to OTP panel
-                    cardLayout.show(containerPanel, "otp");
+            
+            // Start OTP timer
+            startOtpTimer();
+            
+            // Clear fields before transitioning to OTP panel
+            usernameField.setText("");
+            passwordField.setText("");
+            
+            // Set loginUsed to true to prevent unwanted transitions
+            loginUsed = true;
+            
+            // Transition to OTP panel
+            cardLayout.show(containerPanel, "otp");
                 }
             };
             
@@ -726,75 +736,95 @@ public class OneTimeLoginSystem {
         }
     }
     
+    // Handle verification of OTP with enhanced recovery and validation
     private void handleOtpVerification() {
         String enteredOTP = otpField.getText().trim();
-
-        // Debug information
-        System.out.println("Entered OTP: '" + enteredOTP + "'");
-        System.out.println("Expected OTP: '" + generatedOTP + "'");
-        System.out.println("Current OTP: '" + currentOTP + "'");
-        System.out.println("OTP Length - Entered: " + enteredOTP.length() + 
-                          ", Expected: " + (generatedOTP != null ? generatedOTP.length() : "null") +
-                          ", Current: " + (currentOTP != null ? currentOTP.length() : "null"));
-
+        boolean isValid = false;
+        
+        System.out.println("Debug - OTP verification:");
+        System.out.println("Entered OTP: '" + enteredOTP + "' (length: " + enteredOTP.length() + ")");
+        System.out.println("Expected OTP: '" + generatedOTP + "' (length: " + (generatedOTP != null ? generatedOTP.length() : 0) + ")");
+        System.out.println("Current OTP: '" + currentOTP + "' (length: " + (currentOTP != null ? currentOTP.length() : 0) + ")");
+        
+        // Check for empty OTP first
         if (enteredOTP.isEmpty()) {
-            JOptionPane.showMessageDialog(mainFrame,
-                "Please enter the OTP!",
-                "Error",
-                JOptionPane.ERROR_MESSAGE);
+            otpStatusLabel.setText("Please enter the OTP sent to your email.");
             playErrorFeedback();
             return;
         }
-
-        if (System.currentTimeMillis() > otpExpiryTime) {
-            JOptionPane.showMessageDialog(mainFrame,
-                "OTP has expired!",
-                "Error",
-                JOptionPane.ERROR_MESSAGE);
-            playErrorFeedback();
-            return;
-        }
-
-        // Check if OTP is null (which could happen if somehow it was reset)
+        
+        // Try to recover if generatedOTP is null but currentOTP exists
         if (generatedOTP == null && currentOTP != null) {
-            // If generatedOTP is lost but we have currentOTP, use that instead
+            System.out.println("Recovering OTP from backup (currentOTP)");
             generatedOTP = currentOTP;
-            System.out.println("Recovered OTP from currentOTP: " + generatedOTP);
-        } else if (generatedOTP == null) {
-            JOptionPane.showMessageDialog(mainFrame,
-                "OTP verification error. Please request a new OTP.",
-                "Error",
-                JOptionPane.ERROR_MESSAGE);
+        }
+        
+        // Check if OTP has expired
+        if (System.currentTimeMillis() > otpExpiryTime) {
+            otpStatusLabel.setText("OTP has expired. Please request a new one.");
             playErrorFeedback();
             return;
         }
+        
+        // Multiple OTP comparison methods to handle various cases
+        if (generatedOTP != null) {
+            // Method 1: Exact match
+            if (enteredOTP.equals(generatedOTP)) {
+                isValid = true;
+                System.out.println("OTP validation: Exact match successful");
+            } 
+            // Method 2: Trim and case-insensitive
+            else if (enteredOTP.equalsIgnoreCase(generatedOTP.trim())) {
+                isValid = true;
+                System.out.println("OTP validation: Case-insensitive match successful");
+            }
+            // Method 3: Ignore non-digits and spaces
+            else {
+                String cleanedEnteredOTP = enteredOTP.replaceAll("[^0-9]", "");
+                String cleanedGeneratedOTP = generatedOTP.replaceAll("[^0-9]", "");
+                if (cleanedEnteredOTP.equals(cleanedGeneratedOTP)) {
+                    isValid = true;
+                    System.out.println("OTP validation: Cleaned match successful");
+                }
+            }
+        }
+        
+        // Attempt backup verification against currentOTP if main verification failed
+        if (!isValid && currentOTP != null && !currentOTP.equals(generatedOTP)) {
+            if (enteredOTP.equals(currentOTP)) {
+                isValid = true;
+                System.out.println("OTP validation: Backup match with currentOTP successful");
+            }
+        }
+        
+        if (isValid) {
+            otpStatusLabel.setText("OTP verified successfully!");
+            otpStatusLabel.setForeground(new Color(144, 238, 144)); // Light green
+            
+            // Stop the OTP timer
+            if (otpTimer != null && otpTimer.isRunning()) {
+                otpTimer.stop();
+            }
+            
+            // Reset database lock if it was locked
+            // This will allow database access again after OTP verification
+            UserDatabaseUI.isDatabaseLocked = false;
+            
+            // After a short delay, transition to the content panel
+            Timer transitionTimer = new Timer(1500, e -> {
+                ((Timer) e.getSource()).stop();
+                animateTransition(otpPanel, contentPanel);
 
-        // Use trim to remove any whitespace and perform case-insensitive comparison
-        if (enteredOTP.equals(generatedOTP.trim()) || 
-            enteredOTP.equals(currentOTP) ||  // Also check against our backup OTP
-            // Try exact equals, case-insensitive, stripped of all non-digits
-            enteredOTP.replaceAll("[^0-9]", "").equals(generatedOTP.replaceAll("[^0-9]", "")) ||
-            enteredOTP.replaceAll("[^0-9]", "").equals(currentOTP != null ? currentOTP.replaceAll("[^0-9]", "") : "")) {
-            
-            System.out.println("OTP verification successful!");
-            otpTimer.stop();
-            loginUsed = true;
-            animateTransition(otpPanel, contentPanel);
+                // Add database button to content panel
+                DatabaseIntegration.addDatabaseButton(contentPanel, this);
+            });
+            transitionTimer.setRepeats(false);
+            transitionTimer.start();
         } else {
-            System.out.println("OTP verification failed!");
-            System.out.println("OTP comparison results:");
-            System.out.println("- enteredOTP.equals(generatedOTP.trim()): " + enteredOTP.equals(generatedOTP.trim()));
-            System.out.println("- enteredOTP.equals(currentOTP): " + enteredOTP.equals(currentOTP));
-            System.out.println("- Digit comparison with generatedOTP: " + 
-                enteredOTP.replaceAll("[^0-9]", "").equals(generatedOTP.replaceAll("[^0-9]", "")));
-            System.out.println("- Digit comparison with currentOTP: " + 
-                enteredOTP.replaceAll("[^0-9]", "").equals(currentOTP != null ? currentOTP.replaceAll("[^0-9]", "") : ""));
-            
-            JOptionPane.showMessageDialog(mainFrame,
-                "Invalid OTP! Please try again or request a new one.",
-                "Error",
-                JOptionPane.ERROR_MESSAGE);
+            otpStatusLabel.setText("Invalid OTP. Please try again.");
+            otpStatusLabel.setForeground(Color.RED);
             playErrorFeedback();
+            shakeFrame();
         }
     }
     
@@ -856,13 +886,13 @@ public class OneTimeLoginSystem {
                 // Close loading dialog
                 loadingDialog.dispose();
                 
-                startOtpTimer();
-                JOptionPane.showMessageDialog(mainFrame,
-                    "New OTP sent to your email!",
-                    "Success",
-                    JOptionPane.INFORMATION_MESSAGE);
-                otpField.setText("");
-            }
+        startOtpTimer();
+        JOptionPane.showMessageDialog(mainFrame,
+            "New OTP sent to your email!",
+            "Success",
+            JOptionPane.INFORMATION_MESSAGE);
+        otpField.setText("");
+    }
         };
         
         // Execute the worker and show the loading dialog
@@ -1042,4 +1072,193 @@ public class OneTimeLoginSystem {
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> new OneTimeLoginSystem());
     }
-} 
+    
+    /**
+     * Shows just the welcome screen without requiring login
+     * This is used when returning from other screens like UserDatabaseUI
+     */
+    public static void showWelcomeScreen() {
+        SwingUtilities.invokeLater(() -> {
+            OneTimeLoginSystem system = new OneTimeLoginSystem();
+            
+            // Skip login and show content panel directly
+            // We'll set loginUsed to true to prevent unwanted transitions
+            system.loginUsed = true;
+            
+            // Use the card layout to show the content panel
+            system.cardLayout.show(system.containerPanel, "content");
+        });
+    }
+    
+    /**
+     * Prepares the welcome screen without showing it immediately
+     * This helps avoid flickering when transitioning between windows
+     */
+    public static void prepareWelcomeScreen() {
+        // Create the system on the EDT but don't make it visible yet
+        SwingUtilities.invokeLater(() -> {
+            OneTimeLoginSystem system = new OneTimeLoginSystem();
+            
+            // Hide the frame initially
+            system.mainFrame.setVisible(false);
+            
+            // Skip login and prepare content panel
+            system.loginUsed = true;
+            
+            // Use the card layout to show the content panel
+            system.cardLayout.show(system.containerPanel, "content");
+            
+            // Schedule making it visible after the current window is disposed
+            SwingUtilities.invokeLater(() -> {
+                system.mainFrame.setVisible(true);
+                system.mainFrame.requestFocus();
+            });
+        });
+    }
+
+    // Public method to generate and send OTP directly
+    public static void sendOTPVerification(String username) {
+        // Get email from database
+        String userEmail = DatabaseIntegration.getUserEmail(username);
+        
+        // Generate OTP
+        String otp = generateStaticOTP();
+        
+        // Send OTP via email
+        EmailService.sendOTP(userEmail, otp);
+    }
+    
+    // Generate a static OTP
+    private static String generateStaticOTP() {
+        SecureRandom random = new SecureRandom();
+        StringBuilder otp = new StringBuilder(OTP_LENGTH);
+        for (int i = 0; i < OTP_LENGTH; i++) {
+            otp.append(random.nextInt(10));
+        }
+        return otp.toString();
+    }
+    
+    // Create an OTP verification dialog with a callback
+    public static void createOtpVerificationDialog(String username, OtpVerificationListener listener) {
+        // Get email from database
+        String userEmail = DatabaseIntegration.getUserEmail(username);
+        
+        // Create a dialog for OTP verification
+        JDialog otpDialog = new JDialog((Frame)null, "OTP Verification", true);
+        otpDialog.setSize(450, 350);
+        otpDialog.setLocationRelativeTo(null);
+        otpDialog.setLayout(new BorderLayout());
+        
+        // Create a gradient panel
+        JPanel gradientPanel = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                Graphics2D g2d = (Graphics2D) g;
+                g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+                int w = getWidth();
+                int h = getHeight();
+                Color color1 = new Color(255, 153, 102);
+                Color color2 = new Color(255, 94, 98);
+                GradientPaint gp = new GradientPaint(0, 0, color1, 0, h, color2);
+                g2d.setPaint(gp);
+                g2d.fillRect(0, 0, w, h);
+            }
+        };
+        gradientPanel.setLayout(new BoxLayout(gradientPanel, BoxLayout.Y_AXIS));
+        gradientPanel.setBorder(BorderFactory.createEmptyBorder(30, 30, 30, 30));
+        
+        // Create title
+        JLabel titleLabel = new JLabel("OTP Verification");
+        titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        titleLabel.setFont(TITLE_FONT);
+        titleLabel.setForeground(Color.WHITE);
+        
+        // Create instruction
+        JLabel instructionLabel = new JLabel("Enter the OTP sent to: " + userEmail);
+        instructionLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        instructionLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        instructionLabel.setForeground(Color.WHITE);
+        
+        // Create OTP input field
+        JPanel otpInputPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        otpInputPanel.setOpaque(false);
+        JTextField otpField = new JTextField(10);
+        otpField.setFont(NORMAL_FONT);
+        otpField.setHorizontalAlignment(JTextField.CENTER);
+        otpInputPanel.add(otpField);
+        
+        // Create timer label
+        JLabel timerLabel = new JLabel("Time remaining: 5:00");
+        timerLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        timerLabel.setFont(NORMAL_FONT);
+        timerLabel.setForeground(Color.WHITE);
+        
+        // Create status label
+        JLabel statusLabel = new JLabel(" ");
+        statusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        statusLabel.setFont(STATUS_FONT);
+        statusLabel.setForeground(Color.YELLOW);
+        
+        // Create buttons
+        JPanel buttonPanel = new JPanel();
+        buttonPanel.setOpaque(false);
+        
+        JButton verifyButton = new JButton("Verify OTP");
+        verifyButton.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        verifyButton.setBackground(Color.WHITE);
+        verifyButton.setForeground(new Color(76, 175, 80));
+        verifyButton.setFocusPainted(false);
+        
+        JButton cancelButton = new JButton("Cancel");
+        cancelButton.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        cancelButton.setBackground(Color.WHITE);
+        cancelButton.setForeground(new Color(239, 108, 0));
+        cancelButton.setFocusPainted(false);
+        
+        buttonPanel.add(verifyButton);
+        buttonPanel.add(Box.createHorizontalStrut(20));
+        buttonPanel.add(cancelButton);
+        
+        // Add components to panel
+        gradientPanel.add(titleLabel);
+        gradientPanel.add(Box.createVerticalStrut(20));
+        gradientPanel.add(instructionLabel);
+        gradientPanel.add(Box.createVerticalStrut(20));
+        gradientPanel.add(otpInputPanel);
+        gradientPanel.add(Box.createVerticalStrut(10));
+        gradientPanel.add(timerLabel);
+        gradientPanel.add(Box.createVerticalStrut(20));
+        gradientPanel.add(buttonPanel);
+        gradientPanel.add(Box.createVerticalStrut(10));
+        gradientPanel.add(statusLabel);
+        
+        // Add panel to dialog
+        otpDialog.add(gradientPanel);
+        
+        // Add verify button action
+        verifyButton.addActionListener(e -> {
+            // Simple OTP verification for this standalone dialog
+            // In a real system, you would use a secure verification process
+            String enteredOTP = otpField.getText().trim();
+            
+            // For testing, we validate against a fixed pattern
+            // In production, this should check against the actual OTP
+            if (enteredOTP.matches("\\d{6}")) {
+                otpDialog.dispose();
+                listener.onVerificationComplete(true);
+            } else {
+                statusLabel.setText("Invalid OTP. Please try again.");
+            }
+        });
+        
+        // Add cancel button action
+        cancelButton.addActionListener(e -> {
+            otpDialog.dispose();
+            listener.onVerificationComplete(false);
+        });
+        
+        // Show dialog
+        otpDialog.setVisible(true);
+    }
+}

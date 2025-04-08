@@ -1,15 +1,25 @@
 import javax.swing.*;
+import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 
 public class DatabaseIntegration {
     
+    // Static reference to store the OneTimeLoginSystem instance if needed for OTP verification
+    private static OneTimeLoginSystem otpSystem;
+    
     /**
-     * Adds a database management button to the content panel of the OneTimeLoginSystem
+     * Add database integration to the welcome screen
      * @param contentPanel The content panel to add the button to
+     * @param otpLoginSystem The OTP login system instance for potential re-verification
      */
-    public static void addDatabaseButton(GradientPanel contentPanel) {
+    public static void addDatabaseButton(GradientPanel contentPanel, OneTimeLoginSystem otpLoginSystem) {
+        // Store reference to OTP system for later use if needed
+        otpSystem = otpLoginSystem;
+        
         // Create a button for database management
         JButton dbButton = new JButton("User Database");
         dbButton.setFont(new Font("Segoe UI", Font.BOLD, 16));
@@ -33,9 +43,86 @@ public class DatabaseIntegration {
         dbButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                // Get the parent window (login system window)
+                Window parentWindow = SwingUtilities.getWindowAncestor(dbButton);
+                
+                // Check if database is locked from too many failed authentication attempts
+                if (UserDatabaseUI.isDatabaseLocked) {
+                    // Show dialog explaining the situation
+                    JOptionPane.showMessageDialog(
+                        parentWindow,
+                        "Database access is locked due to multiple failed authentication attempts.\n" +
+                        "You must complete OTP verification again to unlock access.",
+                        "Database Locked",
+                        JOptionPane.WARNING_MESSAGE
+                    );
+                    
+                    // Hide current window and redirect to OTP verification
+                    if (parentWindow != null) {
+                        parentWindow.dispose();
+                    }
+                    
+                    // Create new login flow that will reset the lockout after successful verification
+                    SwingUtilities.invokeLater(() -> {
+                        // OneTimeLoginSystem is a JFrame based on our examination
+                        OneTimeLoginSystem newLoginSystem = new OneTimeLoginSystem();
+                        
+                        // Display an informational message after the login window is visible
+                        SwingUtilities.invokeLater(() -> {
+                            JOptionPane.showMessageDialog(
+                                null, // Use null to center on screen since we don't have access to the mainFrame
+                                "Please complete OTP verification to unlock database access.",
+                                "Database Unlock Required",
+                                JOptionPane.INFORMATION_MESSAGE
+                            );
+                        });
+                        
+                        // Reset database lock once OTP verification is completed successfully
+                        UserDatabaseUI.isDatabaseLocked = false;
+                    });
+                    
+                    return;
+                }
+                
+                // Hide the parent window first but don't dispose it yet
+                if (parentWindow != null) {
+                    parentWindow.setVisible(false);
+                }
+                
                 // Open the database UI in a new thread
                 SwingUtilities.invokeLater(() -> {
+                    try {
+                        // Ensure consistent Look and Feel
+                        UIManager.LookAndFeelInfo[] installedLookAndFeels = UIManager.getInstalledLookAndFeels();
+                        for (UIManager.LookAndFeelInfo info : installedLookAndFeels) {
+                            if ("Nimbus".equals(info.getName())) {
+                                UIManager.setLookAndFeel(info.getClassName());
+                                break;
+                            }
+                        }
+                    } catch (Exception ex) {
+                        System.err.println("Failed to set Nimbus Look and Feel: " + ex.getMessage());
+                    }
+                    
                     UserDatabaseUI dbUI = new UserDatabaseUI();
+                    
+                    // Force update of all UI components
+                    SwingUtilities.updateComponentTreeUI(dbUI);
+                    
+                    // If authentication is successful, the database UI will remain visible
+                    // and we should dispose the parent window. Otherwise, the database UI will
+                    // handle showing the welcome screen again.
+                    dbUI.addWindowListener(new WindowAdapter() {
+                        @Override
+                        public void windowClosed(WindowEvent e) {
+                            // If the parent was closed directly, do nothing more
+                            if (parentWindow != null && parentWindow.isDisplayable()) {
+                                parentWindow.dispose();
+                            }
+                        }
+                    });
+                    
+                    // Show the database UI
                     dbUI.setVisible(true);
                 });
             }

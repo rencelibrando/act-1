@@ -14,6 +14,9 @@ public class UserDatabase {
     private static final Map<String, List<LoginRecord>> inMemoryLoginHistory = new HashMap<>();
     private static boolean useInMemoryStorage = false;
     
+    // Track the current logged in user
+    private static String currentUsername = null;
+    
     // Initialize the database with sample users if empty
     static {
         try {
@@ -142,6 +145,11 @@ public class UserDatabase {
     
     // Record a login attempt
     public static void recordLogin(String username, boolean successful) {
+        if (successful) {
+            // Store the current username when successful login
+            currentUsername = username;
+        }
+        
         if (useInMemoryStorage) {
             // Record in in-memory storage
             LoginRecord record = new LoginRecord(new Date(), successful);
@@ -259,5 +267,20 @@ public class UserDatabase {
             // Close database connection
             DatabaseManager.closeConnection();
         }
+    }
+    
+    // Get the current username
+    public static String getCurrentUsername() {
+        return currentUsername;
+    }
+    
+    // Set the current username (used for direct setting without login)
+    public static void setCurrentUsername(String username) {
+        currentUsername = username;
+    }
+    
+    // Clear the current username (e.g., on logout)
+    public static void clearCurrentUsername() {
+        currentUsername = null;
     }
 } 
